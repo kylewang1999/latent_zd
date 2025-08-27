@@ -1,19 +1,17 @@
-import sys, os, os.path as osp
+import sys, os.path as osp
 import optax
 import jax
 import jax.numpy as jnp
-from jax import random
 from tqdm import tqdm
 import flax.nnx as nnx
 import matplotlib.pyplot as plt
 import numpy as np
-from functools import wraps
+from functools import wraps, partial
 from pprint import pprint
 
 from flax.struct import dataclass as flax_dataclass
-from flax.struct import field, PyTreeNode
+from flax.struct import field
 import jax.tree_util as jtu
-from flax.traverse_util import flatten_dict, unflatten_dict
 
 sys.path.append(osp.dirname(osp.dirname(osp.abspath(__file__))))
 
@@ -334,17 +332,9 @@ if __name__ == "__main__":
     rom_nn = NNDoubleIntegratorROM(cfg_rom=cfg_rom)
     rom_expert = DoubleIntegratorROM(cfg_rom=cfg_rom)
 
-    rom_nn.set_nn_params({
-        "nn_encoder": {"kernel": jnp.array([[0., 1.], [1., 0.]])},
-        "nn_decoder": {"kernel": jnp.array([[0., 1.], [1., 0.]])},
-        "nn_gy":      {"kernel": jnp.array([[0.]]), "bias": jnp.array([1.])},
-        # "nn_fy":      {"kernel": jnp.array([[0.]])},                      
-        # "nn_fz":      {"kernel": jnp.array([[1.], [0.]])},                # ż = y
-        # "nn_psi":      {"kernel": jnp.array([[-0.4]])}, # on purpose give it a incorrect value.
-    })
 
     print("Before training:")
-    pprint(rom_nn.get_nn_params(), width=120)
+    pprint(rom_nn.get_nn_params(), depth=3, width=120)
 
     integrator = Integrator(
         solver=partial(dfx.diffeqsolve, solver=dfx.Tsit5()),
@@ -352,21 +342,16 @@ if __name__ == "__main__":
     )
 
 
-    # freeze_parameters(rom_nn, ["nn_encoder", "nn_decoder"])
-    if (train_ae_only:=False):
-        cfg_loss_ae = CfgLoss(autoencoder=1.0, nondegenerate_enc=0.0, supervised=True)
-        train(rom_nn, rom_expert, integrator, cfg_train, cfg_data, cfg_loss_ae, rng)
-
-    if (train_dyn_only:=True):
-        # cfg_loss_dyn = CfgLoss(autoencoder=0.0, y_proj=1.0, z_proj=1.0, nondegenerate_enc=1.0, supervised=True)
-        cfg_loss_dyn = CfgLoss(autoencoder=1.0, y_proj=0.0, z_proj=0.0, nondegenerate_enc=0.0, supervised=True)
-        freeze_parameters(rom_nn, ["nn_encoder", "nn_decoder"])
+    if (train_supervised:=True):
+        cfg_loss_dyn = CfgLoss(autoencoder=1.0, 
+                            y_proj=1.0, z_proj=1.0,
+                            stable_m=1.0, invari_m=0.0,
+                            nondegenerate_enc=1.0, supervised=True)
         train(rom_nn, rom_expert, integrator, cfg_train, cfg_data, cfg_loss_dyn, rng)
 
-    if (train_zd_policy_only:=False):
-        cfg_loss_zd = CfgLoss(stable_m=1.0, invari_m=1.0, supervised=True)
-        freeze_parameters(rom_nn, ["nn_encoder", "nn_decoder", "nn_fz", "nn_gy", "nn_fy"])
+    if (train_zd_policy_only:=True):
+        cfg_loss_zd = CfgLoss(autoencoder=0.0, 
+                            y_proj=1.0, z_proj=1.0, 
+                            stable_m=1.0, invari_m=1.0,
+                            nondegenerate_enc=0.0, supervised=False)
         train(rom_nn, rom_expert, integrator, cfg_train, cfg_data, cfg_loss_zd, rng)
-        
-    print("After training:")
-    pprint(rom_nn.get_nn_params(), width=120)
